@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+	Tools For DWA
+	
+	Link http://www.desktop-web-analytics.com
+	Link https://github.com/DesktopWebAnalytics
+	Licence http://www.gnu.org/licenses/gpl-3.0-standalone.html GPL v3 or later
+	
+	$Id: ToolsForDWA.mxml 281 2012-03-03 16:01:30Z benoit $
+-->
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009" 
+					   xmlns:s="library://ns.adobe.com/flex/spark" 
+					   xmlns:mx="library://ns.adobe.com/flex/mx" creationComplete="initApp()" showStatusBar="false" currentState="normal">
+	<fx:Script>
+		<![CDATA[
+			import flash.net.registerClassAlias;
+			
+			import mx.collections.XMLListCollection;
+			import mx.resources.ResourceBundle;
+			
+			private var nbLocales:int;
+			private var currentLocales:int;
+			private var localesPiwik:Vector.<String>;
+			private var localesDWA:Array;
+			private var languages:Array;
+			
+			private var languagesResources:Array;
+			
+			private var defaultLanguage:Array;
+			
+			private var currentLocaleName:String;
+			
+			private var start:Date;
+			
+			private function initApp():void{
+				var directory:File = File.desktopDirectory.resolvePath("languages/");
+				filesSaved.text = "Files saved to: "+directory.nativePath;
+			}
+			
+			private function getLanguagesFromPiwik():void{
+				currentState = "loading";
+				
+				start = new Date();
+				
+				progressLocale.setProgress(0, 100);
+				progressAll.setProgress(0, 100);
+				infos.text = "";
+				
+				localesPiwik = new Vector.<String>;
+				
+				var url:String = "http://piwik.org/demo/index.php?module=API&method=LanguagesManager.getAvailableLanguages&format=xml&token_auth=anonymous";
+				var req:URLRequest = new URLRequest(url);
+				var loader:URLLoader = new URLLoader();
+				
+				loader.addEventListener(Event.COMPLETE, resultGetLanguages, false, 0, true);
+				loader.addEventListener(IOErrorEvent.IO_ERROR, ioError, false, 0, true);
+				loader.addEventListener(SecurityErrorEvent.SECURITY_ERROR, securityError, false, 0, true);
+				loader.load(req);
+				showInfos("Contacting Piwik server to retrieve locales");
+			}
+			private function resultGetLanguages(evt:Event):void{
+				var xml:XML = new XML(evt.currentTarget.data);
+				var list:XMLListCollection = new XMLListCollection(xml.row);
+				
+				nbLocales = list.length;
+				//nbLocales = 5;
+				showInfos("Retrieve "+ nbLocales +" locales\n");
+				
+				for each(var row:XML in list){
+					localesPiwik.push(row.children());
+				}
+				
+				getDefaultLanguage();
+			}
+			
+			private function getDefaultLanguage():void{
+				currentLocales = 0;
+				defaultLanguage = new Array();
+				languages = new Array();
+				languagesResources = new Array();
+				localesDWA = new Array();
+				
+				var url:String = "http://piwik.org/demo/index.php?module=API&method=LanguagesManager.getTranslationsForLanguage&languageCode=en&format=xml&token_auth=anonymous";
+				
+				var req:URLRequest = new URLRequest(url);
+				var loader:URLLoader = new URLLoader();
+				
+				loader.addEventListener(Event.COMPLETE, resultGetDefaultLanguage, false, 0, true);
+				loader.addEventListener(IOErrorEvent.IO_ERROR, ioError, false, 0, true);
+				loader.addEventListener(SecurityErrorEvent.SECURITY_ERROR, securityError, false, 0, true);
+				
+				loader.load(req);
+				showInfos("Contacting Piwik server to retrieve 'en' locale");
+			}
+			private function resultGetDefaultLanguage(evt:Event):void{
+				var xml:XML = new XML(evt.currentTarget.data);
+				var xmlResult:XMLList = new XMLList(xml.row);
+				var xmlCollection:XMLListCollection = new XMLListCollection(xmlResult);
+				
+				showInfos("locale 'en' loaded");
+				currentLocaleName = "en";
+				
+				var language:XML;
+				var value:String;
+				
+				var locale:String;
+				var languageString:String;
+				
+				var translateFile:String="";
+				
+				var timerLoc:Timer = new Timer(1, xmlCollection.length);
+				timerLoc.addEventListener(TimerEvent.TIMER, loc);
+				timerLoc.addEventListener(TimerEvent.TIMER_COMPLETE, end);
+				timerLoc.start();
+				
+				showInfos("Reconfiguring 'en' locale");
+				
+				function loc(event:TimerEvent):void{
+					var count:int = event.currentTarget.currentCount-1;
+					language = xmlCollection[count];
+					
+					// API_, CoreAdminHome_, PrivacyManager_, CoreHome_, CorePluginsAdmin_, CoreUpdater_, DBStats_, Feedback_, Installation_, SecurityInfo_, UsersManager_, VisitorGenerator_, PDFReports_, ImageGraph_
+					var excludes:Array = new Array("API_", "CoreAdminHome_", "PrivacyManager_", "CoreHome_", "CorePluginsAdmin_", "CoreUpdater_", "DBStats_", "Feedback_", "Installation_", "SecurityInfo_", "UserCountry_country_", "UsersManager_", "VisitorGenerator_", "PDFReports_", "ImageGraph_");
+					var excluded:Boolean = false;
+					
+					for each(var str:String in excludes){
+						var lab:String = language.label.toString();
+						if(lab.search(str) != -1){
+							excluded = true;
+							break;
+						}
+					}
+					
+					if(!excluded){
+						if(language.label.toString() == "General_Locale")
+						{
+							value = language.value.toString();
+							value = value.substring(0, value.search('.UTF-8'));
+							
+							locale = "en_US";
+							
+						}else if(language.label.toString() == "General_OriginalLanguageName"){
+							languageString = language.value.toString();
+						}else
+						{
+							value = language.value.toString();
+						}
+						var add:Def = new Def();
+						add.label = language.label.toString();
+						add.value = value;
+						defaultLanguage.push(add);
+						
+						translateFile += add.label + "=" + add.value + "\n";
+					}
+					
+					progressLocale.setProgress(event.currentTarget.currentCount, xmlCollection.length);
+				}
+				function end(event:TimerEvent):void{
+					localesDWA.push({code: locale, langue: languageString});
+					languages.push(defaultLanguage);
+					saveLanguageFile(translateFile, locale);
+					
+					currentLocales = 0;
+					getOtherLanguages();
+				}
+				
+			}
+			
+			private function getOtherLanguages():void{
+				
+				if(currentLocales < nbLocales){
+					trace("add: " + currentLocales);
+					currentLocaleName = localesPiwik[currentLocales];
+					if(currentLocaleName != "en"){
+						
+						getLanguage(currentLocaleName);
+					}else{
+						currentLocales++;
+						getOtherLanguages();
+					}
+				}else{
+					trace("finish");
+					showInfos("#####\nfinish");
+					
+					var end:Date = new Date();
+					
+					var time:int = (end.time - start.time) / 1000;
+					trace("time: " + time);
+					
+					var val:String;
+					var h:int;
+					var m:int;
+					var s:int;
+					
+					if(time > 3600){
+						h = time/3600;
+						time = time%3600;
+						if(time > 60){
+							m = time/60;
+							time = time%60;
+							s = time;
+							val = h + 'h ' + m + 'm ' + s + 's';
+						}else{
+							s = time;
+							val = h + 'h 0m ' + s + 's';
+						}
+							
+					}else if(time > 60){
+						m = time/60;
+						s = time%60;
+						
+						val = m + 'm ' + s + 's';
+					}else{
+						s = time;
+						val = s + 's';
+					}
+					
+					showInfos("Did it in "+val);
+					currentState = "normal";
+				}
+			}
+			private function getLanguage(code:String):void{
+				var url:String = "http://piwik.org/demo/index.php?module=API&method=LanguagesManager.getTranslationsForLanguage&languageCode=" + code + "&format=xml&token_auth=anonymous";
+				var req:URLRequest = new URLRequest(url);
+				var loader:URLLoader = new URLLoader();
+				
+				loader.addEventListener(Event.COMPLETE, resultGetLanguage, false, 0, true);
+				loader.addEventListener(IOErrorEvent.IO_ERROR, ioError, false, 0, true);
+				loader.addEventListener(SecurityErrorEvent.SECURITY_ERROR, securityError, false, 0, true);
+				loader.load(req);
+				
+				showInfos("Contacting Piwik server to retrieve '"+code+"' locale");
+			}
+			
+			private function resultGetLanguage(evt:Event):void{
+				var btArray:ByteArray = new ByteArray();
+				btArray.writeObject(defaultLanguage);
+				btArray.position=0;
+				
+				var addLanguage:Array = btArray.readObject();
+				
+				var xml:XML = new XML(evt.currentTarget.data);
+				var xmlResult:XMLList = new XMLList(xml.row);
+				var xmlCollection:XMLListCollection = new XMLListCollection(xmlResult);
+				
+				showInfos("locale '"+currentLocaleName+"' loaded");
+				
+				var language:XML;
+				var value:String;
+				
+				var locale:String;
+				var languageString:String;
+				
+				trace("search: " + currentLocales);
+				
+				var translate:String="";
+				
+				var timer:Timer = new Timer(1, addLanguage.length);
+				timer.addEventListener(TimerEvent.TIMER, loc);
+				timer.addEventListener(TimerEvent.TIMER_COMPLETE, end);
+				timer.start();
+				
+				showInfos("Reconfiguring '"+currentLocaleName+"' locale");
+				
+				function loc(event:TimerEvent):void{
+					var count:int = event.currentTarget.currentCount-1;
+					var ob:Object = addLanguage[count];
+					
+					for each(language in xmlCollection){
+						if(ob.label == language.label.toString()){
+							
+							switch(language.label.toString()){
+								case "General_Locale":
+									value = language.value.toString();
+									value = value.substring(0, value.search('.UTF-8'));
+									
+									locale = value;
+									if(value == "tr_TR"){
+										trace("tu");
+									}
+									break;
+								
+								case "General_OriginalLanguageName":
+									value = language.value.toString();
+									languageString = value;
+									break;
+								
+								default:
+									if(language.value != ""){
+										value = language.value.toString();
+									}
+									break;
+							}
+							if(language.value != ""){
+								ob.value = value;
+							}
+							break;
+						}
+						
+					}
+					translate += ob.label + "=" + ob.value + "\n";
+					
+					progressLocale.setProgress(event.currentTarget.currentCount, addLanguage.length);
+				}
+				function end(event:TimerEvent):void{
+					localesDWA.push({code:locale, langue:languageString});
+					saveLanguageFile(translate, locale);
+					
+					currentLocales++;
+					progressAll.setProgress(currentLocales, nbLocales);
+					getOtherLanguages();
+				}
+				
+			}
+			private function showInfos(msg:String):void{
+				infos.appendText(msg+"\n");
+			}
+			private function saveLanguageFile(translate:String, filename:String):void{
+				var path:String = "languages/" + filename + "/piwik.properties";
+				
+				var file:File = File.desktopDirectory.resolvePath(path);
+				var fileStream:FileStream = new FileStream();
+				fileStream.open(file, FileMode.WRITE);
+				fileStream.position = 0;
+				fileStream.writeMultiByte(translate, "utf-8");
+				fileStream.close();
+				
+				showInfos("file saved for '"+currentLocaleName+"'\n");
+				trace("file saved");
+			}
+			
+			protected function ioError(event:IOErrorEvent):void
+			{
+				// TODO Auto-generated method stub
+				showInfos(event.text);
+				currentState = "normal";
+			}
+			
+			protected function securityError(event:SecurityErrorEvent):void
+			{
+				// TODO Auto-generated method stub
+				showInfos(event.text);
+				currentState = "normal";
+			}
+			
+		]]>
+	</fx:Script>
+	<fx:Declarations>
+		<!-- Placer ici les éléments non visuels (services et objets de valeur, par exemple). -->
+	</fx:Declarations>
+	
+	<s:states>
+		<s:State name="normal" />
+		<s:State name="loading" />
+	</s:states>
+	
+	<s:layout>
+		<s:VerticalLayout paddingTop="5" paddingBottom="5" paddingLeft="5" paddingRight="5" />
+	</s:layout>
+	<s:Label width="100%" textAlign="center" text="Tools For DWA" />
+	
+	<s:VGroup width="100%" height="100%">
+		<s:Button includeIn="normal" label="Reconfigure Piwik translations to DWA" click="getLanguagesFromPiwik()" />
+		<s:Label includeIn="loading" text="Processing...." />
+		<s:Label id="filesSaved" />
+		
+		<mx:ProgressBar id="progressLocale" width="100%" mode="manual" labelPlacement="center" />
+		<mx:ProgressBar id="progressAll" width="100%" mode="manual" labelPlacement="center" />
+		
+		<s:TextArea id="infos" width="100%" height="100%" />
+	</s:VGroup>
+	
+</s:WindowedApplication>
